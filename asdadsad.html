@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Kampaniya Paneli</title>
+
+  <style>
+    body{font-family:Arial,sans-serif;background:#f5f6fa;margin:0;padding:20px}
+    .container{max-width:1200px;margin:0 auto}
+    h1{text-align:center;margin-bottom:14px;color:#222}
+
+    /* Main tabs */
+    .tabs{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:18px}
+    .tab{padding:12px 18px;border-radius:10px;cursor:pointer;background:#fff;border:1px solid #ddd;font-weight:800;user-select:none;transition:0.2s}
+    .tab:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,0.08)}
+    .tab.active{background:#2d7ff9;color:#fff;border-color:#2d7ff9}
+    .tab.disabled{opacity:0.5;cursor:not-allowed;pointer-events:none}
+
+    /* Content */
+    .content-box{background:#fff;border-radius:14px;border:1px solid #e5e5e5;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,0.06)}
+    .header-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .title{font-size:18px;font-weight:900;color:#222}
+    .count{font-size:14px;background:#eef4ff;padding:6px 10px;border-radius:8px;color:#2d7ff9;font-weight:900}
+
+    /* Table */
+    .table-wrap{width:100%;overflow:auto;border-radius:12px;border:1px solid #eee;min-height:140px}
+    table{width:100%;border-collapse:collapse;min-width:900px}
+    th,td{padding:10px 12px;border-bottom:1px solid #eee;text-align:left;font-size:13px;white-space:nowrap}
+    th{background:#f9fafc;font-weight:900;position:sticky;top:0;z-index:10}
+    tr:hover td{background:#f7fbff}
+
+    /* Messages */
+    .loading{padding:25px;text-align:center;color:#2d7ff9;font-weight:900}
+    .empty{padding:20px;text-align:center;color:#999;font-weight:900}
+    .error{padding:20px;text-align:center;color:#d60000;font-weight:900;line-height:1.5}
+    .small{margin-top:8px;font-size:12px;font-weight:600;color:#666}
+
+    /* Campaign codes sub tabs */
+    .subTabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+    .subTab{padding:10px 12px;border-radius:10px;border:1px solid #ddd;background:#fff;cursor:pointer;font-weight:800;font-size:13px}
+    .subTab.active{background:#111827;color:#fff;border-color:#111827}
+
+    @media(max-width:600px){
+      .tab{width:100%;text-align:center}
+      table{min-width:700px}
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Kampaniya Teklifleri</h1>
+
+    <!-- MAIN TABS -->
+    <div class="tabs">
+      <div class="tab active disabled" data-key="profitDriver">Profit Driver</div>
+      <div class="tab disabled" data-key="stockCleaner">Stock Cleaner</div>
+      <div class="tab disabled" data-key="basketExpansion">Basket Expansion</div>
+      <div class="tab disabled" data-key="kampaniyaKodlari">Kampaniya Kodlari</div>
+    </div>
+
+    <div class="content-box">
+      <div class="header-row">
+        <div class="title" id="sectionTitle">Profit Driver</div>
+        <div class="count" id="sectionCount">0 mehsul</div>
+      </div>
+
+      <!-- only Kampaniya Kodlari section -->
+      <div id="subTabsArea"></div>
+
+      <div class="table-wrap" id="tableWrap">
+        <div class="loading">Melumat yuklenir...</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /****************************************************
+   * ✅ 1) 2 API (BURANI DEYIS)
+   ****************************************************/
+  const MAIN_API_URL  = "http://localhost:5678/webhook/fd003273-8155-4f8c-a2df-9d85d582a4cdszvcbdscdcnmnvfcda";
+  const CODES_API_URL = "http://localhost:5678/webhook/fd003273-8155-4f8c-a2df-9d85d582a4cd";
+
+  /****************************************************
+   * ✅ 2) STATE (CACHE)
+   ****************************************************/
+  const state = {
+    loadedMain: false,
+    loadedCodes: false,
+    activeKey: "profitDriver",
+    activeCampaignKey: "A_B_Paketleri",
+
+    data: {
+      profitDriver: [],
+      stockCleaner: [],
+      basketExpansion: [],
+      kampaniyaKodlari: {
+        A_B_Paketleri: [],
+        A_C_Trial: [],
+        BuyMore_Set: [],
+        Hero_Challenger: []
+      }
+    }
+  };
+
+  const sectionNames = {
+    profitDriver: "Profit Driver",
+    stockCleaner: "Stock Cleaner",
+    basketExpansion: "Basket Expansion",
+    kampaniyaKodlari: "Kampaniya Kodlari"
+  };
+
+  function safeText(v){
+    if(v === null || v === undefined) return "";
+    return String(v);
+  }
+
+  function normalizePayload(json){
+    const payload = {};
+
+    if(json && typeof json === "object" && !Array.isArray(json)){
+      Object.keys(json).forEach(k => payload[k] = json[k]);
+      return payload;
+    }
+
+    if(Array.isArray(json)){
+      for(const obj of json){
+        if(!obj || typeof obj !== "object") continue;
+        Object.keys(obj).forEach(k => payload[k] = obj[k]);
+      }
+    }
+
+    return payload;
+  }
+
+  /****************************************************
+   * ✅ HELPERS (format)
+   ****************************************************/
+  function fmtNum(v, maxDecimals = 2){
+    if(v === null || v === undefined || v === "") return "";
+    const n = Number(v);
+    if(Number.isNaN(n)) return safeText(v);
+    return n.toLocaleString("en-US", { maximumFractionDigits: maxDecimals });
+  }
+
+  function renderProdBlock(title, code, meta){
+    return `
+      <div class="prodTitle">${safeText(title)}</div>
+      ${code !== undefined && code !== null && code !== "" ? `<div class="subCode">${safeText(code)}</div>` : ""}
+      ${meta ? `<div class="subMeta">${safeText(meta)}</div>` : ""}
+    `;
+  }
+
+  /****************************************************
+   * ✅ TABLE RENDER (ALL TABLES)
+   ****************************************************/
+  function renderTable(items){
+    const wrap = document.getElementById("tableWrap");
+
+    if(!items || items.length === 0){
+      wrap.innerHTML = `<div class="empty">Bu bolmede melumat yoxdur</div>`;
+      return;
+    }
+
+    /****************************************************
+     * ✅ 1) Basket Expansion (mehsulCutleri) xüsusi format
+     ****************************************************/
+    if(state.activeKey === "basketExpansion"){
+      let html = `<table class="cleanTable"><thead><tr>
+        <th>Məhsul 1</th>
+        <th>Məhsul 2</th>
+        <th>Birlikdə çek sayı</th>
+        <th>Məhsul1 miqdar</th>
+        <th>Məhsul2 miqdar</th>
+        <th>Birlikdə məbləğ</th>
+      </tr></thead><tbody>`;
+
+      items.forEach(row => {
+        html += `<tr>
+          <td>
+            ${renderProdBlock(
+              row.Mehsul1_Adi,
+              row.Mehsul1_Kodu,
+              `${safeText(row.Mehsul1_Kateqoriya)}${row.Mehsul1_ABC ? " • " + safeText(row.Mehsul1_ABC) : ""}`
+            )}
+          </td>
+          <td>
+            ${renderProdBlock(
+              row.Mehsul2_Adi,
+              row.Mehsul2_Kodu,
+              `${safeText(row.Mehsul2_Kateqoriya)}${row.Mehsul2_ABC ? " • " + safeText(row.Mehsul2_ABC) : ""}`
+            )}
+          </td>
+          <td class="num">${fmtNum(row.Birlikde_Cek_Sayi, 0)}</td>
+          <td class="num">${fmtNum(row.Mehsul1_ToplamMiqdar, 0)}</td>
+          <td class="num">${fmtNum(row.Mehsul2_ToplamMiqdar, 0)}</td>
+          <td class="num">${fmtNum(row.Birlikde_Toplam_Mebleg, 2)}</td>
+        </tr>`;
+      });
+
+      html += `</tbody></table>`;
+      wrap.innerHTML = html;
+      return;
+    }
+
+    /****************************************************
+     * ✅ 2) Kampaniya Kodlari - hər subtab üçün xüsusi format
+     ****************************************************/
+    if(state.activeKey === "kampaniyaKodlari"){
+      const k = state.activeCampaignKey;
+
+      // ---------- A_B_Paketleri ----------
+      if(k === "A_B_Paketleri"){
+        let html = `<table class="cleanTable"><thead><tr>
+          <th>Trigger</th>
+          <th>Attach</th>
+          <th>Birlikdə çek sayı</th>
+          <th>Lift</th>
+          <th>Confidence</th>
+        </tr></thead><tbody>`;
+
+        items.forEach(row => {
+          html += `<tr>
+            <td>${renderProdBlock(row.Trigger_Adi, row.Trigger_Kodu, row.Trigger_Kateqoriya)}</td>
+            <td>${renderProdBlock(row.Attach_Adi, row.Attach_Kodu, row.Attach_Kateqoriya)}</td>
+            <td class="num">${fmtNum(row.Birlikde_Cek_Sayi, 0)}</td>
+            <td class="num">${fmtNum(row.Lift, 2)}</td>
+            <td class="num">${fmtNum(row.Confidence, 4)}</td>
+          </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        wrap.innerHTML = html;
+        return;
+      }
+
+      // ---------- A_C_Trial ----------
+      if(k === "A_C_Trial"){
+        let html = `<table class="cleanTable"><thead><tr>
+          <th>Hero</th>
+          <th>Trial</th>
+          <th>Birlikdə çek sayı</th>
+          <th>Lift</th>
+          <th>Confidence</th>
+        </tr></thead><tbody>`;
+
+        items.forEach(row => {
+          html += `<tr>
+            <td>${renderProdBlock(row.Hero_Adi, row.Hero_Kodu, row.Hero_Kateqoriya)}</td>
+            <td>${renderProdBlock(row.Trial_Adi, row.Trial_Kodu, row.Trial_Kateqoriya)}</td>
+            <td class="num">${fmtNum(row.Birlikde_Cek_Sayi, 0)}</td>
+            <td class="num">${fmtNum(row.Lift, 2)}</td>
+            <td class="num">${fmtNum(row.Confidence, 4)}</td>
+          </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        wrap.innerHTML = html;
+        return;
+      }
+
+      // ---------- BuyMore_Set ----------
+      if(k === "BuyMore_Set"){
+        let html = `<table class="cleanTable"><thead><tr>
+          <th>A</th>
+          <th>B</th>
+          <th>C</th>
+          <th>Lift AB</th>
+          <th>Lift AC</th>
+        </tr></thead><tbody>`;
+
+        items.forEach(row => {
+          html += `<tr>
+            <td>${renderProdBlock(row.A_Adi, row.A_Kodu, row.A_Kateqoriya)}</td>
+            <td>${renderProdBlock(row.B_Adi, row.B_Kodu, row.B_Kateqoriya)}</td>
+            <td>${renderProdBlock(row.C_Adi, row.C_Kodu, row.C_Kateqoriya)}</td>
+            <td class="num">${fmtNum(row.Lift_AB, 2)}</td>
+            <td class="num">${fmtNum(row.Lift_AC, 2)}</td>
+          </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        wrap.innerHTML = html;
+        return;
+      }
+
+      // ---------- Hero_Challenger ----------
+      if(k === "Hero_Challenger"){
+        let html = `<table class="cleanTable"><thead><tr>
+          <th>Hero</th>
+          <th>Challenger</th>
+          <th>Birlikdə çek sayı</th>
+          <th>Lift</th>
+          <th>Confidence</th>
+        </tr></thead><tbody>`;
+
+        items.forEach(row => {
+          const heroMeta = `${safeText(row.Hero_SubKateqoriya)}${row.Hero_ABC ? " • " + safeText(row.Hero_ABC) : ""}`;
+          const challMeta = `${safeText(row.Challenger_SubKateqoriya)}${row.Challenger_ABC ? " • " + safeText(row.Challenger_ABC) : ""}`;
+
+          html += `<tr>
+            <td>${renderProdBlock(row.Hero_Adi, row.Hero_Kodu, heroMeta)}</td>
+            <td>${renderProdBlock(row.Challenger_Adi, row.Challenger_Kodu, challMeta)}</td>
+            <td class="num">${fmtNum(row.Birlikde_Cek_Sayi, 0)}</td>
+            <td class="num">${fmtNum(row.Lift, 2)}</td>
+            <td class="num">${fmtNum(row.Confidence, 4)}</td>
+          </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        wrap.innerHTML = html;
+        return;
+      }
+    }
+
+    /****************************************************
+     * ✅ 3) Digər table-lər üçün universal render
+     * - MehsulAdi yuxarıda
+     * - MehsulKodu altında boz
+     * - id/createdAt/updatedAt gizli
+     * - Profit Driver-də KampaniyaNovu gizli ✅
+     ****************************************************/
+    const PROD_NAME_KEYS = ["Mehsul_Adi","MehsulAdi","ProductName","MehsulAdi_"];
+    const PROD_CODE_KEYS = ["Mehsul_Kodu","MehsulKodu","Mehsulkodu","ProductCode","Sku","SKU","Barcode","Barkod"];
+
+    function findKey(row, keys){
+      if(!row) return null;
+      const rowKeys = Object.keys(row);
+      for(const kk of keys){
+        if(rowKeys.includes(kk)) return kk;
+      }
+      return null;
+    }
+
+    const sampleRow = items[0] || {};
+    const productNameKey = findKey(sampleRow, PROD_NAME_KEYS);
+    const productCodeKey = findKey(sampleRow, PROD_CODE_KEYS);
+
+    const hiddenCols = new Set(["id","createdAt","updatedAt"]);
+
+    // ✅ Profit Driver-də KampaniyaNovu sütunu çıxmasın
+    if(state.activeKey === "profitDriver"){
+      hiddenCols.add("KampaniyaNovu");
+    }
+
+    if(productNameKey && productCodeKey){
+      hiddenCols.add(productCodeKey);
+    }
+
+    const colSet = new Set();
+    items.forEach(x => Object.keys(x).forEach(k => colSet.add(k)));
+    const cols = Array.from(colSet).filter(c => !hiddenCols.has(c));
+
+    let html = `<table><thead><tr>`;
+    cols.forEach(c => html += `<th>${c}</th>`);
+    html += `</tr></thead><tbody>`;
+
+    items.forEach(row => {
+      html += `<tr>`;
+      cols.forEach(c => {
+        if(productNameKey && productCodeKey && c === productNameKey){
+          html += `
+            <td>
+              <div>${safeText(row[productNameKey])}</div>
+              <div class="subCode">${safeText(row[productCodeKey])}</div>
+            </td>
+          `;
+        } else {
+          const val = row[c];
+          const isNumber = typeof val === "number" || (!isNaN(Number(val)) && val !== "" && val !== null);
+          html += `<td class="${isNumber ? "num" : ""}">${safeText(val)}</td>`;
+        }
+      });
+      html += `</tr>`;
+    });
+
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+  }
+
+  function updateHeaderCount(count){
+    document.getElementById("sectionCount").innerText = `${count} mehsul`;
+  }
+
+  /* ✅ Kampaniya Kodlari Sub Tabs */
+  function renderCampaignSubTabs(){
+    const area = document.getElementById("subTabsArea");
+
+    if(state.activeKey !== "kampaniyaKodlari"){
+      area.innerHTML = "";
+      return;
+    }
+
+    const keys = Object.keys(state.data.kampaniyaKodlari);
+
+    area.innerHTML = `
+      <div class="subTabs">
+        ${keys.map(k => `
+          <div class="subTab ${k === state.activeCampaignKey ? "active" : ""}" data-campaign="${k}">
+            ${k}
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    area.querySelectorAll(".subTab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.activeCampaignKey = btn.dataset.campaign;
+        renderCampaignSubTabs();
+
+        const items = state.data.kampaniyaKodlari[state.activeCampaignKey] || [];
+        updateHeaderCount(items.length);
+        renderTable(items);
+      });
+    });
+  }
+
+  /* ✅ Main tab switch */
+  function setActiveTab(key){
+    state.activeKey = key;
+
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelector(`.tab[data-key="${key}"]`).classList.add("active");
+
+    document.getElementById("sectionTitle").innerText = sectionNames[key];
+
+    if(key === "kampaniyaKodlari"){
+      renderCampaignSubTabs();
+
+      if(!state.loadedCodes){
+        document.getElementById("tableWrap").innerHTML = `<div class="loading">Kampaniya kodlari yuklenir...</div>`;
+        updateHeaderCount(0);
+        return;
+      }
+
+      const items = state.data.kampaniyaKodlari[state.activeCampaignKey] || [];
+      updateHeaderCount(items.length);
+      renderTable(items);
+      return;
+    }
+
+    renderCampaignSubTabs();
+    const items = state.data[key] || [];
+    updateHeaderCount(items.length);
+    renderTable(items);
+  }
+
+  document.querySelectorAll(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      if(!state.loadedMain) return;
+      setActiveTab(tab.dataset.key);
+    });
+  });
+
+  async function loadMain(){
+    const wrap = document.getElementById("tableWrap");
+    wrap.innerHTML = `<div class="loading">Main data yuklenir...</div>`;
+
+    const res = await fetch(MAIN_API_URL, { method: "GET" });
+    if(!res.ok) throw new Error("Main API cavab vermedi. Status: " + res.status);
+
+    const raw = await res.json();
+    const payload = normalizePayload(raw);
+
+    state.data.basketExpansion = payload.mehsulCutleri || [];
+    state.data.stockCleaner    = payload.stokdOlanMehsullar || [];
+    state.data.profitDriver    = payload.enCoxAlinanlar || [];
+
+    state.loadedMain = true;
+
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("disabled"));
+    setActiveTab("profitDriver");
+  }
+
+  async function loadCodes(){
+    const res = await fetch(CODES_API_URL, { method: "GET" });
+    if(!res.ok) throw new Error("Codes API cavab vermedi. Status: " + res.status);
+
+    const raw = await res.json();
+    const payload = normalizePayload(raw);
+
+    state.data.kampaniyaKodlari.A_B_Paketleri   = payload.A_B_Paketleri || [];
+    state.data.kampaniyaKodlari.A_C_Trial       = payload.A_C_Trial || [];
+    state.data.kampaniyaKodlari.BuyMore_Set     = payload.BuyMore_Set || [];
+    state.data.kampaniyaKodlari.Hero_Challenger = payload.Hero_Challenger || [];
+
+    state.loadedCodes = true;
+
+    if(state.activeKey === "kampaniyaKodlari"){
+      renderCampaignSubTabs();
+      const items = state.data.kampaniyaKodlari[state.activeCampaignKey] || [];
+      updateHeaderCount(items.length);
+      renderTable(items);
+    }
+  }
+
+  async function init(){
+    try{
+      await Promise.all([ loadMain(), loadCodes() ]);
+    }catch(err){
+      document.getElementById("tableWrap").innerHTML = `
+        <div class="error">
+          Xeta: ${err.message}
+          <div class="small">
+            CORS problemi varsa n8n Respond node-a header elave et:<br>
+            Access-Control-Allow-Origin: *<br>
+            Access-Control-Allow-Methods: GET,POST,OPTIONS<br>
+            Access-Control-Allow-Headers: Content-Type
+          </div>
+        </div>
+      `;
+      console.error(err);
+    }
+  }
+
+  init();
+</script>
+
+<style>
+  .subCode{
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+  .subMeta{
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+  }
+  .prodTitle{
+    font-weight: 600;
+  }
+  .num{
+    text-align: right;
+    white-space: nowrap;
+  }
+  .cleanTable td{
+    vertical-align: top;
+  }
+</style>
+
+
+<style>
+  /* Universal sub code */
+  .subCode{
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+
+  /* Meta: kateqoriya / abc / subkateqoriya */
+  .subMeta{
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+  }
+
+  /* Product title */
+  .prodTitle{
+    font-weight: 600;
+  }
+
+  /* numbers */
+  .num{
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* Clean tables */
+  .cleanTable td{
+    vertical-align: top;
+  }
+</style>
+
+<style>
+  /* Məhsul kodu / Trigger kodu alt sətr */
+  .subCode{
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+</style>
+
+<style>
+  /* Məhsul adı + kodu eyni sətirdə */
+  .prodLine{
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* Məhsul kodu boz */
+  .prodCode{
+    font-size: 12px;
+    color: #888;
+  }
+
+  /* Kateqoriya adı balaca hərif */
+  .catSmall{
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    color: #666;
+    text-transform: lowercase;
+  }
+
+  /* Kampaniya kodlari üçün Trigger_Kodu alt sətr */
+  .subCode{
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+</style>
+
+<style>
+  /* ✅ Trigger_Kodu -> Trigger_Adi altinda balaca font ve boz reng */
+  .subCode{
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+</style>
+
+<style>
+  /* ✅ Trigger_Kodu kiçik font ve boz reng */
+  .subCode{
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+</style>
+
+
+</body>
+</html>
